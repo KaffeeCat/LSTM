@@ -11,7 +11,7 @@ immutable LSTMState
 end
 ``` 
 
-第二部：定义LSTM中的权重（shared at every time）：
+第二步：定义LSTM中的权重（shared at every time）：
 ``` Python
 immutable LSTMParam
   i2h_W :: mx.SymbolicNode # 输入x相关的weights
@@ -20,7 +20,7 @@ immutable LSTMParam
   h2h_b :: mx.SymbolicNode # 从上一个cell传入的h相关的bias
 end
 ``` 
-第三部：定义LSTM cell
+第三步：定义LSTM cell
 ``` Python
 fuction lstm_cell(  input_data::SymbolicNode, # input x
                     prev_state::LSTMParam, # previous state
@@ -44,4 +44,59 @@ fuction lstm_cell(  input_data::SymbolicNode, # input x
    next_h = out_gate .* mx.Activation(next_c, act_type=:tanh)
    
    return LSTMState(next_c, next_h)
+``` 
+第四步：完整（展开的）LSTM，with L layers and T tiem steps.
+``` Python
+fuction LSTM( n_layer::Int,
+              seq_len::Int,
+              dim_hidden::Int,
+              dim_embed::Int,
+              n_class::Int)
+   
+   # 对所有weights和states进行定义
+   embed_W = mx.Variable(symbol(name, "_embed_weight")) # 对输入x编码的weights.
+   pred_W = mx.Variable(symbol(name, "_pred_weight")) # 在每一个LSTM cell中做预测判断使用的weights
+   pred_b = mx.Variable(symbol(name, "_pred_bias")) #  在每一个LSTM cell中做预测判断使用的bias
+   
+   # 对每一个LSTM cell进行定义
+   layer_param_states = map(1:n_layer) do i
+      param = LSTMParam(  mx.Variable(symbol(name, "_l$(i)_i2h_weight")),
+                          mx.Variable(symbol(name, "_l$(i)_i2h_bias")),
+                          mx.Variable(symbol(name, "_l$(i)_h2h_weight")),
+                          mx.Variable(symbol(name, "_l$(i)_h2h_bias")))
+      state = LSTMState(  mx.Variable(symbol(name, "_l$(i)_init_c")),
+                          mx.Variable(symbol(name, "_l$(i)_init_h")))
+      (param, state)
+   end
+   
+   outputs = mx.SymbolicNode[]  # 用来存放所有LSTM cell的输出结果
+   
+   for t = 1:seq_len
+      data = mx.Variable(symbol(name, "_data_$t"))
+      label = mx.Variable(symbol(name, "_label_$t"))
+      hidden = mx.FullyConnected(data=data, weight=embed_W, num_hidden=dim_embed, no_bias=true)
+      
+      # Stack LSTM cells
+      for i = 1:n_layer
+          l_param, l_state = layer_param_states[i]
+          next_state = lstm_cell(hidden, l_state, l_param, num_hidden=dim_hidden)
+          hidden = next_state.h
+          layer_param_states[i] = (l_param, next_state)
+       end
+       
+       # 使用Softmax预测
+       pred = mx.FullyConnected(data=hidden, weight=pred_W, bias=pred_b, num_hidden=n_class)
+       smax = mx.SoftmaxOutput(pred, label)
+       push!(outputs, smax)
+   end
+   
+   # 在每一个时间节点上，LSTM cell的预测输出连接这Softmax操作，根据给予的样本label的进行后向反馈(back propagate)，LSTM state在时间序列上前后顺序相连，让系统根据时间序列后向反馈(back propagate)。然后，在时间序列的尾端，最后一个LSTM state后续再无连接，所以在下面，使用BlockGrad让最后一个state与所有的states相连，让其后向反馈0梯度，使整个计算图完整。
+   for i = 1:n_layer
+      l_param, l_state = layer_param_states[i]
+      final_state = LSTMState(mx.BlockGrad(l_state.c),
+                              mx.BlockGrad(l_state.h)) # BlockGrad operator back propagates 0-gradient
+      layer_param_states[i] = (l_param, final_state)
+   end
+   
+   return mx.Group(outputs...)
 ``` 
