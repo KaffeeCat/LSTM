@@ -45,13 +45,13 @@ fuction lstm_cell(  input_data::SymbolicNode, # input x
    
    return LSTMState(next_c, next_h)
 ``` 
-第四步：完整（展开的）LSTM，with L layers and T tiem steps.
+第四步：完整（展开的）LSTM.
 ``` Python
-fuction LSTM( n_layer::Int,
-              seq_len::Int,
-              dim_hidden::Int,
-              dim_embed::Int,
-              n_class::Int)
+fuction LSTM( n_layer::Int, # 多少层Stack LSTM layers
+              seq_len::Int, # 多少时间节点
+              dim_hidden::Int,  # LSTM cell中i2h和h2h连接每个gate的网络隐藏层节点数
+              dim_embed::Int, # 输入data数据编码用的全连接网络的隐藏层节点数
+              n_class::Int) # 输出的类别总数
    
    # 对所有weights和states进行定义
    embed_W = mx.Variable(symbol(name, "_embed_weight")) # 对输入x编码的weights.
@@ -84,7 +84,7 @@ fuction LSTM( n_layer::Int,
           layer_param_states[i] = (l_param, next_state)
        end
        
-       # 使用Softmax预测
+       # 使用Softmax预测输出
        pred = mx.FullyConnected(data=hidden, weight=pred_W, bias=pred_b, num_hidden=n_class)
        smax = mx.SoftmaxOutput(pred, label)
        push!(outputs, smax)
